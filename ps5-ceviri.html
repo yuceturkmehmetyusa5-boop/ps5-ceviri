@@ -1,0 +1,266 @@
+ps5-ceviri.html
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PS5 Canlı Alt Yazı & Çeviri</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f1115;
+      color: #f5f7fa;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 14px 16px;
+      background: #181c24;
+      border-bottom: 1px solid #2a3140;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #startBtn { background: #22c55e; color: #08130c; }
+    #stopBtn  { background: #ef4444; color: #fff; }
+    #ttsBtn   { background: #3b82f6; color: #fff; }
+    #clearBtn { background: #334155; color: #fff; }
+    main {
+      flex: 1;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .box {
+      background: #181c24;
+      border: 1px solid #2a3140;
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .label {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    #originalText {
+      font-size: 15px;
+      color: #cbd5e1;
+      min-height: 24px;
+    }
+    #translatedText {
+      font-size: 24px;
+      font-weight: bold;
+      color: #facc15;
+      line-height: 1.35;
+      min-height: 54px;
+    }
+    #history {
+      max-height: 240px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .item {
+      padding: 8px 10px;
+      background: #11151c;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .item .en { color: #94a3b8; font-size: 12px; }
+    .item .tr { color: #f5f7fa; margin-top: 2px; }
+    .status { font-size: 12px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>PS5 Canlı Alt Yazı</h1>
+      <div class="status" id="statusText">Durum: Hazır</div>
+    </div>
+    <div class="controls">
+      <button id="startBtn">Dinlemeyi Başlat</button>
+      <button id="stopBtn">Durdur</button>
+      <button id="ttsBtn">Sesli Oku: Kapalı</button>
+      <button id="clearBtn">Temizle</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="box">
+      <div class="label">Algılanan Konuşma (İngilizce)</div>
+      <div id="originalText">-</div>
+    </div>
+
+    <div class="box">
+      <div class="label">Anlık Türkçe Alt Yazı</div>
+      <div id="translatedText">Dinlemeyi başlattığında diyaloglar burada görünecek.</div>
+    </div>
+
+    <div class="box">
+      <div class="label">Son Satırlar</div>
+      <div id="history"></div>
+    </div>
+  </main>
+
+  <script>
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const ttsBtn = document.getElementById("ttsBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const statusText = document.getElementById("statusText");
+    const originalText = document.getElementById("originalText");
+    const translatedText = document.getElementById("translatedText");
+    const historyEl = document.getElementById("history");
+
+    let recognition = null;
+    let isListening = false;
+    let ttsEnabled = false;
+    let lastTranslated = "";
+
+    function setStatus(msg) {
+      statusText.textContent = "Durum: " + msg;
+    }
+
+    async function translateToTurkish(text) {
+      const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=tr&dt=t&q=" + encodeURIComponent(text);
+      const res = await fetch(url);
+      const data = await res.json();
+      return data[0].map(part => part[0]).join("");
+    }
+
+    function speakTurkish(text) {
+      if (!ttsEnabled || !window.speechSynthesis || !text) return;
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "tr-TR";
+      utter.rate = 1.05;
+      window.speechSynthesis.speak(utter);
+    }
+
+    function addHistory(en, tr) {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `<div class="en">${en}</div><div class="tr">${tr}</div>`;
+      historyEl.prepend(div);
+    }
+
+    if (!SpeechRecognition) {
+      setStatus("Bu tarayıcı canlı konuşma tanımayı desteklemiyor. Android Chrome kullan.");
+      startBtn.disabled = true;
+    } else {
+      recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = true;
+
+      recognition.onstart = () => {
+        isListening = true;
+        setStatus("Dinleniyor (PS5/TV sesini yakalıyor)...");
+      };
+
+      recognition.onerror = (event) => {
+        setStatus("Hata: " + event.error);
+      };
+
+      recognition.onend = () => {
+        if (isListening) {
+          try { recognition.start(); } catch (e) {}
+        } else {
+          setStatus("Durduruldu");
+        }
+      };
+
+      recognition.onresult = async (event) => {
+        let interim = "";
+        let finalChunk = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript.trim();
+          if (event.results[i].isFinal) {
+            finalChunk += transcript + " ";
+          } else {
+            interim += transcript + " ";
+          }
+        }
+
+        if (interim.trim()) {
+          originalText.textContent = interim.trim();
+        }
+
+        const cleanFinal = finalChunk.trim();
+        if (cleanFinal) {
+          originalText.textContent = cleanFinal;
+          setStatus("Çevriliyor...");
+          try {
+            const tr = await translateToTurkish(cleanFinal);
+            if (tr && tr !== lastTranslated) {
+              lastTranslated = tr;
+              translatedText.textContent = tr;
+              addHistory(cleanFinal, tr);
+              speakTurkish(tr);
+            }
+            setStatus("Dinleniyor...");
+          } catch (err) {
+            setStatus("Çeviri bağlantısı alınamadı");
+          }
+        }
+      };
+    }
+
+    startBtn.addEventListener("click", () => {
+      if (!recognition) return;
+      isListening = true;
+      try { recognition.start(); } catch (e) {}
+    });
+
+    stopBtn.addEventListener("click", () => {
+      isListening = false;
+      if (recognition) recognition.stop();
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      setStatus("Durduruldu");
+    });
+
+    ttsBtn.addEventListener("click", () => {
+      ttsEnabled = !ttsEnabled;
+      ttsBtn.textContent = ttsEnabled ? "Sesli Oku: Açık" : "Sesli Oku: Kapalı";
+      if (!ttsEnabled && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    });
+
+    clearBtn.addEventListener("click", () => {
+      originalText.textContent = "-";
+      translatedText.textContent = "";
+      historyEl.innerHTML = "";
+      lastTranslated = "";
+    });
+  </script>
+</body>
+</html>
+
